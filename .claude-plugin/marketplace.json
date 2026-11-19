@@ -1,0 +1,16 @@
+{
+  "name": "claude-sessions",
+  "owner": {
+    "name": "jabenb"
+  },
+  "plugins": [
+    {
+      "name": "sessions",
+      "source": "./",
+      "description": "Sessions: every Claude Code session on the machine on one browser page, as a tree with details, cost and search"
+    }
+  ],
+  "allowCrossMarketplaceDependenciesOn": [
+    "claude-webhub"
+  ]
+}
