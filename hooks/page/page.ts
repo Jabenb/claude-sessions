@@ -56,7 +56,7 @@ kbd{font-family:'JetBrains Mono',monospace;font-size:11px;min-width:20px;height:
 .frow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .pane{border:1px solid var(--border);background:var(--surface);border-radius:14px;height:var(--paneh);display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
-.layout{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,6fr);gap:16px;align-items:start}
+.layout{display:grid;grid-template-columns:minmax(0,9fr) minmax(0,11fr);gap:16px;align-items:start}
 .phead{flex:none;display:flex;align-items:center;gap:6px 8px;padding:10px 12px 10px 16px;border-bottom:1px solid var(--border);min-height:49px;flex-wrap:wrap}
 .phead .fsel select{max-width:150px}
 .phead{flex-wrap:nowrap}
@@ -75,6 +75,15 @@ kbd{font-family:'JetBrains Mono',monospace;font-size:11px;min-width:20px;height:
 .chev svg{transition:transform .15s}
 .chev-sp{width:22px;flex:none}
 .rowbtn{flex:1 1 auto;min-width:0;border:0;background:transparent;display:flex;align-items:center;gap:8px;padding:0 10px 0 2px;text-align:left;min-height:34px}
+.rowbtn.two{flex-direction:column;align-items:stretch;justify-content:center;gap:3px;padding:6px 10px 6px 2px}
+.rowbtn.two .r1{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.rowbtn.two .r1>.live-dot,.rowbtn.two .r1>.done-dot{margin-top:6px}
+.rowbtn.two .r1>svg{margin-top:3px;flex:none}
+.rowbtn.two .ttl{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35;overflow-wrap:anywhere}
+.rowbtn.two .r2{display:flex;align-items:center;gap:10px;padding-left:16px;min-width:0}
+.rowbtn.two .r2 .c-br{flex:0 1 auto;max-width:none;margin-right:auto}
+.rowbtn.two .r2 .c-fk,.rowbtn.two .r2 .c-n,.rowbtn.two .r2 .c-cost,.rowbtn.two .r2 .c-time{width:auto;font-size:11.5px}
+.rowbtn.two .r2 .c-cost{color:var(--muted)}
 .rail{width:18px;flex:none;position:relative}
 .rail.line::before,.rail.tee::before,.rail.elbow::before{content:'';position:absolute;left:10px;top:0;bottom:0;border-left:1.5px solid var(--sugg-line)}
 .rail.elbow::before{bottom:50%;border-bottom-left-radius:4px}
@@ -157,7 +166,7 @@ mark.cur{background:var(--hit-cur);color:var(--hit-cur-fg);box-shadow:0 0 0 2px 
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (max-width:1180px){.c-n{display:none}.spark{display:none!important}}
 @media (max-width:980px){.layout{grid-template-columns:minmax(0,1fr)}.card-col{display:none}.sb.show-card .card-col{display:flex}.sb.show-card .tree-col{display:none}.back{display:inline-flex!important}}
-@media (max-width:700px){.cgrid{grid-template-columns:minmax(0,1fr)}.c-br{display:none}.stat-l{display:none}.main,.hdr-in{padding-left:16px;padding-right:16px}}
+@media (max-width:700px){.cgrid{grid-template-columns:minmax(0,1fr)}.c-br:not(.r2 .c-br){display:none}.stat-l{display:none}.main,.hdr-in{padding-left:16px;padding-right:16px}}
 @media (prefers-reduced-motion: reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
@@ -755,16 +764,18 @@ function computeTree() {
       var soon = isSoon(x) ? '<span class="soon" title="' + esc(t.soonTip(date(x.deleteAt, true))) + '" aria-label="' + esc(t.soonTip(date(x.deleteAt, true))) + '">' + IC.clock + '</span>' : ''
       push('<div class="trow' + (sel ? ' sel' : '') + (dim ? ' dim' : '') + '" data-key="' + esc(sk) + '" style="padding-left:40px">' + rails +
         (allKids ? '<button class="chev" tabindex="-1" data-act="tog" data-k="' + esc(sk) + '" aria-label="' + esc((kExp ? t.collapse : t.expand) + ' ' + title) + '">' + chev(kExp ? 90 : 0) + '</button>' : '<span class="chev-sp" aria-hidden="true"></span>') +
-        '<button class="rowbtn" id="row-' + esc(sk) + '" data-act="open" data-id="' + esc(x.id) + '" role="treeitem" aria-level="' + (3 + depth) + '" aria-selected="' + sel + '"' + (allKids ? ' aria-expanded="' + kExp + '"' : '') +
+        '<button class="rowbtn two" id="row-' + esc(sk) + '" data-act="open" data-id="' + esc(x.id) + '" role="treeitem" aria-level="' + (3 + depth) + '" aria-selected="' + sel + '"' + (allKids ? ' aria-expanded="' + kExp + '"' : '') +
         ' aria-label="' + esc(title + ', ' + status + ', ' + money(x.cost)) + '" tabindex="-1" title="' + esc(title + ' · ' + status) + '">' +
+        '<span class="r1">' +
         (x.live ? '<span class="live-dot" aria-hidden="true"></span>' : '<span class="done-dot" aria-hidden="true"></span>') +
         (D.ep[x.id] ? fork(13, 'var(--sugg)') : '') +
         '<span class="ttl' + (isPromptTitle(x) ? ' prompt' : '') + '">' + segs(title, tq && pm === 'title' ? tq : '') + '</span>' +
-        (hint ? '<span class="hint">' + esc(hint) + '</span>' : '') + soon +
-        '<span class="c-br">' + esc(lastBranch(x) || '—') + '</span>' +
-        '<span class="c-fk" title="' + esc(allKids ? t.forksTip(allKids) : '') + '">' + (allKids ? fork(12) + allKids : '') + '</span>' +
+        (hint ? '<span class="hint">' + esc(hint) + '</span>' : '') + soon + '</span>' +
+        '<span class="r2">' +
+        '<span class="c-br" title="' + esc(x.branches.join(' → ') || '—') + '">' + esc(lastBranch(x) || '—') + '</span>' +
+        (allKids ? '<span class="c-fk" title="' + esc(t.forksTip(allKids)) + '">' + fork(12) + allKids + '</span>' : '') +
         '<span class="c-n" title="' + esc(t.msgsTip) + '">' + x.n + '</span>' +
-        '<span class="c-cost">' + money(x.cost) + '</span><span class="c-time">' + esc(rel(x.last)) + '</span></button></div>', sk,
+        '<span class="c-cost">' + money(x.cost) + '</span><span class="c-time">' + esc(rel(x.last)) + '</span></span></button></div>', sk,
         { canExpand: kids.length > 0, expanded: kExp, parent: parentKey, act: function () { select(x.id) } })
       if (kExp) kids.forEach(function (c, ci) { walk(c, depth + 1, cont.concat([!isLast]), ci === kids.length - 1, sk) })
     }

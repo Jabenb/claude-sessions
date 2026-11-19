@@ -1,6 +1,6 @@
 {
   "name": "sessions",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Sessions: a browser page with every Claude Code session on the machine as a tree of projects and forks, with full details, cost, lifetime and search in what was written",
   "author": {
     "name": "jabenb"
