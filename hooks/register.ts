@@ -154,7 +154,58 @@ const appSessions = async ($: EngineInterface): Promise<{ list: AppSession[] | n
   }
 }
 
-/** Archives or restores sessions in Claude Desktop one by one (the app asks the person about each), the session of this mod last. */
+/** The input a hook of the app put in place of the call's, as its refusal quotes it; null when it quotes none. */
+export const rewrittenInput = (text: string): Record<string, unknown> | null => {
+  const at = text.indexOf('The hook produced this input: ')
+
+  if (at === -1) {
+    return null
+  }
+
+  const start = text.indexOf('{', at)
+
+  for (let end = text.indexOf('}', start); start !== -1 && end !== -1; end = text.indexOf('}', end + 1)) {
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1)) as unknown
+
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // Not the whole object yet.
+    }
+  }
+
+  return null
+}
+
+/**
+ * Calls one of the app's tools as the person's own request: through the session's tool path with the press as
+ * `consent`, so the permission path (auto mode included) reads it as the user's, which a plugin's direct
+ * `$.mcp.call` is not. When the app's hook rewrote the input after review, the call is made once more with it.
+ */
+const askApp = async ($: EngineInterface, tool: string, args: Record<string, unknown>, consent: string): Promise<{ ok: boolean; message: string }> => {
+  const name = `mcp__${APP_SERVER}__${tool}`
+  let input: Record<string, unknown> = args
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const answer = await $.tool.call({ ...input, tool: name, consent } as never) as { deny?: string; result?: unknown; text?: string; isError?: boolean }
+    const text = answer.deny ?? (typeof answer.text === 'string' && answer.text !== '' ? answer.text : answerText(answer.result as { content?: unknown }))
+    const failed = answer.deny !== undefined || answer.isError === true
+    const rewritten = failed && attempt === 0 ? rewrittenInput(text) : null
+
+    if (rewritten === null) {
+      return { ok: !failed, message: text }
+    }
+
+    const { tool: _tool, tool_use_id: _id, consent: _consent, ...own } = rewritten
+    input = own
+  }
+
+  return { ok: false, message: 'the app changed the call again' }
+}
+
+/** Archives or restores sessions in Claude Desktop one by one (the app may ask the person about each), the session of this mod last. */
 const archive = async ($: EngineInterface, action: { id: number; kind: 'archive' | 'unarchive'; sids: string[] }): Promise<void> => {
   let known: PageState['sessions'] = []
   await publish($, held => {
@@ -166,19 +217,23 @@ const archive = async ($: EngineInterface, action: { id: number; kind: 'archive'
   const own = await $.session.id()
   const order = [...action.sids].sort((a, b) => Number(a === own) - Number(b === own))
   const results: Array<{ sid: string; ok: boolean; message: string }> = []
+  const press = action.kind === 'archive' ? 'Archive' : 'Restore from archive'
 
   for (const sid of order) {
-    const app = known.find(one => one.id === sid)?.app ?? null
+    const one = known.find(each => each.id === sid)
+    const app = one?.app ?? null
 
     if (app === null) {
       results.push({ sid, ok: false, message: 'Claude Desktop does not know this session' })
       continue
     }
 
+    const name = (one?.title || one?.first || sid).slice(0, 80)
+    const consent = `The user pressed "${press}" on the Sessions page for the session "${name}" (${app}) and wants it ${action.kind === 'archive' ? 'archived' : 'restored from the archive'}.`
+
     try {
-      const answer = await $.mcp.call(APP_SERVER, action.kind === 'archive' ? 'archive_session' : 'unarchive_session',
-        action.kind === 'archive' ? { session_id: app, reason: 'From the Sessions page in Claude Hub' } : { session_id: app })
-      results.push({ sid, ok: answer.isError !== true, message: answerText(answer) })
+      results.push({ sid, ...(await askApp($, action.kind === 'archive' ? 'archive_session' : 'unarchive_session',
+        action.kind === 'archive' ? { session_id: app, reason: 'From the Sessions page in Claude Hub' } : { session_id: app }, consent)) })
     } catch (error) {
       results.push({ sid, ok: false, message: error instanceof Error ? error.message : String(error) })
     }

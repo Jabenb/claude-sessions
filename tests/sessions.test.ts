@@ -36,6 +36,9 @@ type World = {
   apps: Array<Record<string, unknown>>
   appCalls: Array<{ tool: string; args: Record<string, unknown> }>
   hasApp: boolean
+  /** The consent each call to the app's tools carried, and whether the app's hook rewrites the first one's input after review. */
+  consents: string[]
+  isRewritten: boolean
 }
 
 /** The engine and the hub beneath the mod, held in memory: files, the chat-file reader's answers, the model, and the hub's page, push, read and pull. */
@@ -43,7 +46,7 @@ const world = (on: On, given: Partial<World> = {}): World => {
   const held: World = {
     files: new Map(), runs: [], pushed: [], state: null, pages: [], presses: [], index: [session(A, { live: true, app: 'local_a', mtime: NOW - 600_000 }), session(B, { parent: A, forkN: 2 })], asked: [],
     apps: [{ sessionId: 'local_a', title: 'A', cwd: '/w/shop', isArchived: false, isRunning: false, link: 'claude://claude.ai/epitaxy/local_a' }],
-    appCalls: [], hasApp: true,
+    appCalls: [], hasApp: true, consents: [], isRewritten: false,
     reply: { isAnswered: true, text: `[{"id": "${B}", "why": "про очередь"}, {"id": "nope", "why": "x"}]`, usage: { input_tokens: 1_000_000, output_tokens: 0 } },
     ...given,
   }
@@ -106,10 +109,23 @@ const world = (on: On, given: Partial<World> = {}): World => {
       return { value: { content: [{ type: 'text', text: `${JSON.stringify(held.apps)}\n\nOnly sessions on this SSH connection [are] shown.` }], isError: false } } as never
     }
 
-    const refused = e.args.session_id === 'local_b'
-    held.apps = held.apps.map(app => (app.sessionId === e.args.session_id && !refused ? { ...app, isArchived: e.tool === 'archive_session' } : app))
+    return { value: { content: [{ type: 'text', text: 'a plugin may not call this tool itself in auto mode' }], isError: true } } as never
+  })
+  /** The app's tools as the session runs them for the person: the call carries the press as consent. */
+  on('tool.call', (_, e) => {
+    const { tool, consent, tool_use_id: _id, ...args } = e as unknown as { tool: string; consent?: string; tool_use_id?: string } & Record<string, unknown>
+    const short = tool.replace('mcp__ccd_session_mgmt__', '')
+    held.consents.push(consent ?? '')
 
-    return { value: { content: [{ type: 'text', text: refused ? 'The session is pinned' : 'Archived' }], isError: refused } } as never
+    if (held.isRewritten && args.session === undefined) {
+      return { deny: `a hook changed this call's input after auto mode reviewed it. The hook produced this input: ${JSON.stringify({ ...args, session: '"A" (local_a)' })}. In your next response, issue the call once more.` } as never
+    }
+
+    held.appCalls.push({ tool: short, args })
+    const refused = args.session_id === 'local_b'
+    held.apps = held.apps.map(app => (app.sessionId === args.session_id && !refused ? { ...app, isArchived: short === 'archive_session' } : app))
+
+    return { result: { content: [{ type: 'text', text: refused ? 'The session is pinned' : 'Archived' }] }, text: refused ? 'The session is pinned' : 'Archived', isError: refused } as never
   })
   on('model.complete', (_, e) => {
     held.asked.push(typeof e.prompt === 'string' ? e.prompt : '')
@@ -292,6 +308,7 @@ test('archiving from the page goes through Claude Desktop one session at a time 
 
   expect(calls.map(call => call.args.session_id)).toEqual(['local_b', 'local_a'])
   expect(calls[0]?.args.reason).toBe('From the Sessions page in Claude Hub')
+  expect(held.consents[0]).toMatch(/^The user pressed "Archive" on the Sessions page .*\(local_b\)/)
   expect(last(held).op).toEqual({
     id: 5, kind: 'archive', status: 'done', results: [
       { sid: B, ok: false, message: 'The session is pinned' },
@@ -305,6 +322,16 @@ test('archiving from the page goes through Claude Desktop one session at a time 
 
   expect(held.appCalls.at(-2)).toEqual({ tool: 'unarchive_session', args: { session_id: 'local_a' } })
   expect(last(held).op).toMatchObject({ id: 6, kind: 'unarchive', status: 'done' })
+})
+
+test('when the app\'s hook rewrites the call after review, it is made once more with that input', async ($, on) => {
+  const { held, press } = await started($, on, { isRewritten: true })
+  await press({ type: 'archive', id: 7, sids: [A] })
+
+  expect(held.appCalls.filter(call => call.tool === 'archive_session')).toEqual([
+    { tool: 'archive_session', args: { session_id: 'local_a', reason: 'From the Sessions page in Claude Hub', session: '"A" (local_a)' } },
+  ])
+  expect(last(held).op).toEqual({ id: 7, kind: 'archive', status: 'done', results: [{ sid: A, ok: true, message: 'Archived' }] })
 })
 
 test('the app\'s list is read from the text of its answer, notes after it ignored', async () => {
