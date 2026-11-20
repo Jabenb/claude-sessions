@@ -14,6 +14,12 @@ const PULL_STUCK_MS = PULL_WAIT_MS + 10_000
 const INDEX_EVERY_MS = 15_000
 /** One session indexes for all: the one holding the lock, taken over when its holder has not renewed it for this long. */
 const LEADER_STALE_MS = 45_000
+/**
+ * What the page's state holds as this load writes it. A lock taken by a load of a lower one (none: 0.1.x, which knows
+ * nothing of `app` and drops it) is taken over at once: an older version left running in a long session must not index
+ * for all and strip what it does not know.
+ */
+const LOCK_SCHEMA = 2
 const INDEX_TIMEOUT_MS = 300_000
 const SEARCH_TIMEOUT_MS = 120_000
 /** Claude Desktop's tools for its sessions, as the engine names the server. */
@@ -76,9 +82,10 @@ const isLeader = async ($: EngineInterface): Promise<boolean> => {
 
   try {
     if (await $.fs.exists(lock)) {
-      const held = JSON.parse(String(await $.fs.read(lock))) as { owner?: unknown; at?: unknown }
+      const held = JSON.parse(String(await $.fs.read(lock))) as { owner?: unknown; at?: unknown; schema?: unknown }
+      const schema = typeof held.schema === 'number' ? held.schema : 1
 
-      if (held.owner !== LISTENER && typeof held.at === 'number' && now - held.at < LEADER_STALE_MS) {
+      if (held.owner !== LISTENER && typeof held.at === 'number' && now - held.at < LEADER_STALE_MS && schema >= LOCK_SCHEMA) {
         return false
       }
     }
@@ -86,7 +93,7 @@ const isLeader = async ($: EngineInterface): Promise<boolean> => {
     // An unreadable lock is taken over.
   }
 
-  await $.fs.write(lock, JSON.stringify({ owner: LISTENER, at: now }))
+  await $.fs.write(lock, JSON.stringify({ owner: LISTENER, at: now, schema: LOCK_SCHEMA }))
 
   return true
 }

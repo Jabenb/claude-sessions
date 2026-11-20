@@ -167,9 +167,21 @@ test('an unchanged index is not pushed again; a refresh from the page indexes at
   expect(last(held).sessions.map(one => one.title)).toEqual(['Новое имя'])
 })
 
+test('a fresh lock of an older version (no schema) is taken over at once, so it cannot strip what it does not know', async ($, on) => {
+  const held = world(on)
+  held.files.set(LOCK, JSON.stringify({ owner: 'old-0.1', at: NOW - 1000 }))
+  const clock = mock.clock(on, { now: NOW })
+  await $.session.start(START)
+  await clock.advance(10)
+
+  expect(indexRuns(held)).toBe(1)
+  expect(JSON.parse(held.files.get(LOCK) ?? '{}')).toMatchObject({ schema: 2 })
+  expect(last(held).app).toMatchObject({ status: 'ok' })
+})
+
 test('another session holding a fresh lock does the indexing; a quiet one is taken over', async ($, on) => {
   const held = world(on)
-  held.files.set(LOCK, JSON.stringify({ owner: 'someone-else', at: NOW - 1000 }))
+  held.files.set(LOCK, JSON.stringify({ owner: 'someone-else', at: NOW - 1000, schema: 2 }))
   const clock = mock.clock(on, { now: NOW })
   await $.session.start(START)
   await clock.advance(10)

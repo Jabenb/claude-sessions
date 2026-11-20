@@ -289,7 +289,7 @@ var TEXTS = {
     archive: 'Архивировать', unarchive: 'Вернуть из архива',
     archiveTip: 'Claude Desktop завершит процесс сессии; переписка останется, сессию можно вернуть из архива. Подтвердить нужно в окне Claude Desktop',
     unarchiveTip: 'Вернуть сессию из архива Claude Desktop. Подтвердить нужно в окне Claude Desktop',
-    appUnknown: 'Claude Desktop не знает эту сессию', appNoState: 'Claude Desktop не сообщил, в архиве ли эта сессия', appWait: 'Жду ответа от Claude Desktop…',
+    appUnknown: 'Claude Desktop не знает эту сессию', appNoState: 'Claude Desktop не сообщил, в архиве ли эта сессия', appWait: 'Жду ответа от Claude Desktop…', appOld: 'Страницу заполняет старая версия мода в другой сессии Claude Code — обновите мод там или перезапустите ту сессию',
     appUnavail: function (e) { return 'Claude Desktop недоступен' + (e ? ': ' + e : '') },
     appNote: function (e) { return 'Архивирование и открытие в Claude Desktop недоступны' + (e ? ': ' + e : '') },
     opBusy: 'Дождитесь окончания текущей операции',
@@ -368,7 +368,7 @@ var TEXTS = {
     archive: 'Архівувати', unarchive: 'Повернути з архіву',
     archiveTip: 'Claude Desktop завершить процес сесії; листування залишиться, сесію можна повернути з архіву. Підтвердити треба у вікні Claude Desktop',
     unarchiveTip: 'Повернути сесію з архіву Claude Desktop. Підтвердити треба у вікні Claude Desktop',
-    appUnknown: 'Claude Desktop не знає цієї сесії', appNoState: 'Claude Desktop не повідомив, чи ця сесія в архіві', appWait: 'Чекаю на відповідь від Claude Desktop…',
+    appUnknown: 'Claude Desktop не знає цієї сесії', appNoState: 'Claude Desktop не повідомив, чи ця сесія в архіві', appWait: 'Чекаю на відповідь від Claude Desktop…', appOld: 'Сторінку заповнює стара версія мода в іншій сесії Claude Code — оновіть мод там або перезапустіть ту сесію',
     appUnavail: function (e) { return 'Claude Desktop недоступний' + (e ? ': ' + e : '') },
     appNote: function (e) { return 'Архівування й відкриття в Claude Desktop недоступні' + (e ? ': ' + e : '') },
     opBusy: 'Дочекайтеся завершення поточної операції',
@@ -447,7 +447,7 @@ var TEXTS = {
     archive: 'Archive', unarchive: 'Restore from archive',
     archiveTip: 'Claude Desktop ends the session process; the conversation stays and the session can be restored. You approve it in the Claude Desktop window',
     unarchiveTip: 'Restore the session from the Claude Desktop archive. You approve it in the Claude Desktop window',
-    appUnknown: 'Claude Desktop does not know this session', appNoState: 'Claude Desktop did not say whether this session is archived', appWait: 'Waiting for Claude Desktop…',
+    appUnknown: 'Claude Desktop does not know this session', appNoState: 'Claude Desktop did not say whether this session is archived', appWait: 'Waiting for Claude Desktop…', appOld: 'An older version of the mod in another Claude Code session fills this page: update the mod there or restart that session',
     appUnavail: function (e) { return 'Claude Desktop is unavailable' + (e ? ': ' + e : '') },
     appNote: function (e) { return 'Archiving and opening in Claude Desktop are unavailable' + (e ? ': ' + e : '') },
     opBusy: 'Wait until the current operation finishes',
@@ -591,6 +591,7 @@ function normalize(next) {
     sessions: arr(n.sessions).map(normSession).filter(function (x) { return x.id }),
     fts: n.fts && typeof n.fts === 'object' ? n.fts : null, semantic: n.semantic && typeof n.semantic === 'object' ? n.semantic : null,
     reader: n.reader && typeof n.reader === 'object' ? n.reader : null, semanticModel: str(n.semanticModel),
+    appOld: next != null && !('app' in n),
     app: n.app && typeof n.app === 'object' ? { status: n.app.status === 'ok' ? 'ok' : 'unavailable', error: str(n.app.error), at: num(n.app.at) } : null,
     op: n.op && typeof n.op === 'object' && n.op.id != null ? {
       id: num(n.op.id), kind: n.op.kind === 'unarchive' ? 'unarchive' : 'archive', status: str(n.op.status),
@@ -618,6 +619,7 @@ function appOk() { return !!(state && state.app && state.app.status === 'ok') }
 /* Why the session cannot be archived or restored from here; '' when it can. */
 function actBlock(x) {
   var t = T()
+  if (state && state.appOld) return t.appOld
   if (!state || !state.app) return t.appWait
   if (state.app.status !== 'ok') return t.appUnavail(state.app.error)
   if (!x.app) return t.appUnknown
@@ -983,7 +985,7 @@ function renderLeft() {
     var found = tree && tree.filtering ? '<span style="font-size:12px;color:var(--sugg);background:var(--sugg-soft);border-radius:999px;padding:1px 8px;white-space:nowrap">' + esc(t.found(tree.matched)) + '</span>' : ''
     paint($('phead'), '<span class="lbl">' + esc(t.treeHead) + '</span>' + found + '<span style="flex:1 1 auto"></span>' +
       '<label class="fsel" style="height:28px"><span>' + esc(t.sort) + '</span><select data-ch="sort">' + opts([['last', t.sLast], ['cost', t.sCost], ['created', t.sCreated], ['mem', t.sMem], ['idle', t.sIdle]], S.sort) + '</select></label>' +
-      '<button class="ghost" data-act="selmode" aria-pressed="' + S.selMode + '"' + (!S.selMode && !appOk() ? ' disabled' : '') + ' title="' + esc(!S.selMode && !appOk() ? (state && state.app ? t.appUnavail(state.app.error) : t.appWait) : t.selectTip) + '" style="flex:none;height:28px;border:1px solid ' + (S.selMode ? 'var(--sugg)' : 'var(--border)') + ';background:' + (S.selMode ? 'var(--sugg-soft)' : 'var(--surface)') + ';color:' + (S.selMode ? 'var(--sugg)' : 'var(--muted)') + ';border-radius:8px;padding:0 9px;font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:5px;white-space:nowrap">' + IC.boxes + esc(t.select) + '</button>' +
+      '<button class="ghost" data-act="selmode" aria-pressed="' + S.selMode + '"' + (!S.selMode && !appOk() ? ' disabled' : '') + ' title="' + esc(!S.selMode && !appOk() ? (state && state.app ? t.appUnavail(state.app.error) : state && state.appOld ? t.appOld : t.appWait) : t.selectTip) + '" style="flex:none;height:28px;border:1px solid ' + (S.selMode ? 'var(--sugg)' : 'var(--border)') + ';background:' + (S.selMode ? 'var(--sugg-soft)' : 'var(--surface)') + ';color:' + (S.selMode ? 'var(--sugg)' : 'var(--muted)') + ';border-radius:8px;padding:0 9px;font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:5px;white-space:nowrap">' + IC.boxes + esc(t.select) + '</button>' +
       '<button class="ghost" data-act="expand" aria-label="' + esc(t.expandAll) + '" title="' + esc(t.expandAll) + '" style="width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--muted)">' + IC.expand + '</button>' +
       '<button class="ghost" data-act="collapse" aria-label="' + esc(t.collapseAll) + '" title="' + esc(t.collapseAll) + '" style="width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--muted)">' + IC.collapse + '</button>')
     paint($('ftsbar'), '')
