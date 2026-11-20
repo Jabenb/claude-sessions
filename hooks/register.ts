@@ -1,7 +1,8 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { PageAction, PageState } from './contract'
-import { EMPTY, FTS_RUNNING, ftsOf, MOD, parseAction, parseIndex, parseSemantic, parseState, READER_RUNNING, readerOf, semanticPrompt, usdOf } from './model'
+import type { AppLink, PageAction, PageState } from './contract'
+import { answerText, EMPTY, FTS_RUNNING, ftsOf, MOD, parseAction, parseAppList, parseIndex, parseSemantic, parseState, READER_RUNNING, readerOf, semanticPrompt, usdOf, withApp } from './model'
+import type { AppSession } from './model'
 import { PAGE } from './page/page'
 
 const SCOPE = 'global'
@@ -15,6 +16,9 @@ const INDEX_EVERY_MS = 15_000
 const LEADER_STALE_MS = 45_000
 const INDEX_TIMEOUT_MS = 300_000
 const SEARCH_TIMEOUT_MS = 120_000
+/** Claude Desktop's tools for its sessions, as the engine names the server. */
+const APP_SERVER = 'ccd_session_mgmt'
+const APP_LIST_LIMIT = 1000
 
 /** One load of this module: the hub hands the page's presses to the newest load only, and the index lock names it. */
 const LISTENER = `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -106,15 +110,17 @@ const refresh = async ($: EngineInterface, isForced: boolean): Promise<void> => 
     }
 
     $.ui.status(undefined)
-    const sessions = JSON.stringify(index.sessions)
+    const apps = await appSessions($)
+    const merged = withApp(index.sessions, apps.list, await $.clock.now())
+    const sessions = JSON.stringify([merged, apps.link.status, apps.link.error])
     const host = await hostName($)
 
     await publish($, held => {
-      if (!isForced && sessions === lastSessions && !held.isIndexing && held.sessions.length === index.sessions.length && held.host === host) {
+      if (!isForced && sessions === lastSessions && !held.isIndexing && held.sessions.length === merged.length && held.host === host && held.app !== null) {
         return null
       }
 
-      return { ...held, host, at: index.at, keepDays: index.keepDays, isIndexing: false, sessions: index.sessions, semanticModel: model }
+      return { ...held, host, at: index.at, keepDays: index.keepDays, isIndexing: false, sessions: merged, semanticModel: model, app: apps.link }
     })
     lastSessions = sessions
   } finally {
@@ -123,6 +129,59 @@ const refresh = async ($: EngineInterface, isForced: boolean): Promise<void> => 
 }
 
 let host = ''
+
+/** Claude Desktop's sessions, archived ones too; null with the reason when its tools are out of reach (a CLI session, an old app). */
+const appSessions = async ($: EngineInterface): Promise<{ list: AppSession[] | null; link: AppLink }> => {
+  const at = await $.clock.now()
+
+  try {
+    const answer = await $.mcp.call(APP_SERVER, 'list_sessions', { include_archived: true, limit: APP_LIST_LIMIT })
+
+    if (answer.isError === true) {
+      return { list: null, link: { status: 'unavailable', error: answerText(answer) || 'list_sessions failed', at } }
+    }
+
+    return { list: parseAppList(answerText(answer)), link: { status: 'ok', error: '', at } }
+  } catch (error) {
+    return { list: null, link: { status: 'unavailable', error: error instanceof Error ? error.message : String(error), at } }
+  }
+}
+
+/** Archives or restores sessions in Claude Desktop one by one (the app asks the person about each), the session of this mod last. */
+const archive = async ($: EngineInterface, action: { id: number; kind: 'archive' | 'unarchive'; sids: string[] }): Promise<void> => {
+  let known: PageState['sessions'] = []
+  await publish($, held => {
+    known = held.sessions
+
+    return { ...held, op: { id: action.id, kind: action.kind, status: 'running', results: [] } }
+  })
+
+  const own = await $.session.id()
+  const order = [...action.sids].sort((a, b) => Number(a === own) - Number(b === own))
+  const results: Array<{ sid: string; ok: boolean; message: string }> = []
+
+  for (const sid of order) {
+    const app = known.find(one => one.id === sid)?.app ?? null
+
+    if (app === null) {
+      results.push({ sid, ok: false, message: 'Claude Desktop does not know this session' })
+      continue
+    }
+
+    try {
+      const answer = await $.mcp.call(APP_SERVER, action.kind === 'archive' ? 'archive_session' : 'unarchive_session',
+        action.kind === 'archive' ? { session_id: app, reason: 'From the Sessions page in Claude Hub' } : { session_id: app })
+      results.push({ sid, ok: answer.isError !== true, message: answerText(answer) })
+    } catch (error) {
+      results.push({ sid, ok: false, message: error instanceof Error ? error.message : String(error) })
+    }
+
+    await publish($, held => (held.op?.id !== action.id ? null : { ...held, op: { ...held.op, results: [...results] } }))
+  }
+
+  await publish($, held => (held.op?.id !== action.id ? null : { ...held, op: { id: action.id, kind: action.kind, status: 'done', results } }))
+  await refresh($, true)
+}
 
 const hostName = async ($: EngineInterface): Promise<string> => {
   if (host === '') {
@@ -141,6 +200,11 @@ const handle = async ($: EngineInterface, action: PageAction): Promise<void> => 
   switch (action.type) {
     case 'refresh':
       await refresh($, true)
+      return
+
+    case 'archive':
+    case 'unarchive':
+      await archive($, { id: action.id, kind: action.type, sids: action.sids })
       return
 
     case 'fts': {

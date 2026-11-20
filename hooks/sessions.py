@@ -280,8 +280,20 @@ def config_paths(config):
     return os.path.join(config, 'projects'), os.path.join(config, 'sessions'), os.path.join(config, 'settings.json')
 
 
+def memory_mb(pid):
+    """Resident plus swapped memory of a process, in MB; None when it cannot be read."""
+    try:
+        with open('/proc/%d/status' % pid, encoding='utf-8') as handle:
+            fields = dict(line.split(':', 1) for line in handle if ':' in line)
+        kb = sum(int(fields.get(key, '0 kB').split()[0]) for key in ('VmRSS', 'VmSwap'))
+        return round(kb / 1024)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def live_sessions(folder):
-    """The ids of the sessions whose process runs: ~/.claude/sessions/<pid>.json names each process's session."""
+    """The sessions whose process runs: ~/.claude/sessions/<pid>.json names each process's session and, for one Claude
+    Desktop runs, the app's own id of it. Session id -> {pid, app}."""
     live = {}
     try:
         names = os.listdir(folder)
@@ -295,7 +307,8 @@ def live_sessions(folder):
                 held = json.load(handle)
             pid = int(held.get('pid') or name[:-5])
             if os.path.exists('/proc/%d' % pid) and isinstance(held.get('sessionId'), str):
-                live[held['sessionId']] = pid
+                app = held.get('hostSessionId')
+                live[held['sessionId']] = {'pid': pid, 'app': app if isinstance(app, str) and app.startswith('local_') else None}
         except (OSError, ValueError, TypeError):
             continue
     return live
@@ -402,13 +415,17 @@ def index(config, cache_path):
         held['isSub'] = os.sep + 'subagents' + os.sep in path
         kept[path] = held
 
+    # The app's id of a session is only in its process's file: kept once seen, as the process ends with archiving.
+    live = live_sessions(sessions_dir)
+    apps = {sid: app for sid, app in cache.get('apps', {}).items() if isinstance(app, str)}
+    apps.update({sid: held['app'] for sid, held in live.items() if held['app'] is not None})
+
     tmp = cache_path + '.tmp'
     os.makedirs(os.path.dirname(cache_path) or '.', exist_ok=True)
     with open(tmp, 'w', encoding='utf-8') as handle:
-        json.dump({'v': CACHE_VERSION, 'files': kept}, handle, ensure_ascii=False, separators=(',', ':'))
+        json.dump({'v': CACHE_VERSION, 'files': kept, 'apps': apps}, handle, ensure_ascii=False, separators=(',', ':'))
     os.replace(tmp, cache_path)
 
-    live = live_sessions(sessions_dir)
     days = keep_days(settings)
     helpers = {}
     for held in kept.values():
@@ -449,6 +466,7 @@ def index(config, cache_path):
             'apiMs': state.get('totalAPIDuration'), 'toolMs': state.get('totalToolDuration'),
             'added': state.get('totalLinesAdded'), 'removed': state.get('totalLinesRemoved'),
             'deleteAt': None if acc['own'] in live else held['mtime'] + days * 86400000,
+            'app': apps.get(acc['own']), 'memMb': memory_mb(live[acc['own']]['pid']) if acc['own'] in live else None,
         })
     out.sort(key=lambda one: one['last'], reverse=True)
     return {'sessions': out, 'keepDays': days, 'readBytes': read_bytes, 'at': int(time.time() * 1000)}

@@ -79,7 +79,7 @@ class SessionsTest(unittest.TestCase):
         with open(os.path.join(base, PARENT, 'subagents', 'agent-a1.meta.json'), 'w') as handle:
             json.dump({'agentType': 'Explore'}, handle)
         with open(os.path.join(self.config, 'sessions', '%d.json' % os.getpid()), 'w') as handle:
-            json.dump({'pid': os.getpid(), 'sessionId': LONE}, handle)
+            json.dump({'pid': os.getpid(), 'sessionId': LONE, 'hostSessionId': 'local_lone'}, handle)
         with open(os.path.join(self.config, 'settings.json'), 'w') as handle:
             json.dump({'cleanupPeriodDays': 10}, handle)
         self.cache = os.path.join(self.config, 'mods-data', 'sessions', 'cache.json')
@@ -136,6 +136,17 @@ class SessionsTest(unittest.TestCase):
         self.assertTrue(found[LONE]['live'])
         self.assertIsNone(found[LONE]['deleteAt'])
         self.assertEqual(found[PARENT]['deleteAt'], found[PARENT]['mtime'] + 10 * 86400000)
+
+    def test_the_app_id_of_a_session_is_kept_after_its_process_ends(self):
+        found = self.index()
+
+        self.assertEqual((found[LONE]['app'], found[PARENT]['app']), ('local_lone', None))
+        self.assertGreater(found[LONE]['memMb'], 0)
+        self.assertIsNone(found[PARENT]['memMb'])
+        os.remove(os.path.join(self.config, 'sessions', '%d.json' % os.getpid()))
+        again = self.index()
+
+        self.assertEqual((again[LONE]['app'], again[LONE]['live'], again[LONE]['memMb']), ('local_lone', False, None))
 
     def test_a_file_that_grew_is_read_on_from_where_it_stopped(self):
         self.index()

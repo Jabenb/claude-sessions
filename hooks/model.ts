@@ -1,9 +1,12 @@
-import type { Fts, PageAction, PageState, Reader, Semantic, Session } from './contract'
+import type { Activity, AppLink, Fts, Op, PageAction, PageState, Reader, Semantic, Session } from './contract'
 
 export const MOD = 'sessions'
 export const READ_MAX = 1000
 const SEMANTIC_SESSIONS = 400
 const SEMANTIC_RESULTS = 10
+const SIDS_MAX = 200
+/** A session whose file changed this recently counts as working. */
+export const WORKING_MS = 120_000
 
 export const EMPTY: PageState = {
   v: 1,
@@ -16,6 +19,8 @@ export const EMPTY: PageState = {
   semantic: null,
   reader: null,
   semanticModel: 'haiku',
+  app: null,
+  op: null,
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -50,6 +55,12 @@ export const parseAction = (data: unknown): PageAction | null => {
     }
     case 'refresh':
       return { type: 'refresh' }
+    case 'archive':
+    case 'unarchive': {
+      const sids = (Array.isArray(data.sids) ? data.sids : []).map(sid => text(sid, 80)).filter(sid => /^[A-Za-z0-9-]{8,80}$/.test(sid))
+
+      return sids.length === 0 ? null : { type: data.type, id, sids: [...new Set(sids)].slice(0, SIDS_MAX) }
+    }
     default:
       return null
   }
@@ -72,6 +83,8 @@ export const parseState = (held: unknown): PageState => {
     semantic: isRecord(held.semantic) ? (held.semantic as Semantic) : null,
     reader: isRecord(held.reader) ? (held.reader as Reader) : null,
     semanticModel: typeof held.semanticModel === 'string' && held.semanticModel !== '' ? held.semanticModel : EMPTY.semanticModel,
+    app: isRecord(held.app) ? (held.app as AppLink) : null,
+    op: isRecord(held.op) ? (held.op as Op) : null,
   }
 }
 
@@ -194,3 +207,88 @@ export const usdOf = (model: string, usage: Usage | undefined): number | null =>
 
   return Math.round(sum) / 1e6
 }
+
+/** One session as Claude Desktop's `list_sessions` gives it. */
+export type AppSession = { sessionId: string; title: string; cwd: string; isArchived: boolean; isRunning: boolean; link: string }
+
+/** The JSON array at the start of a tool's text answer, which may go on with notes after it. */
+const leadingArray = (answer: string): unknown => {
+  const start = answer.indexOf('[')
+  let depth = 0
+  let isString = false
+
+  for (let at = Math.max(0, start); start >= 0 && at < answer.length; at += 1) {
+    const char = answer[at]
+
+    if (isString) {
+      isString = char === '\\' ? (at += 1, true) : char !== '"'
+    } else if (char === '"') {
+      isString = true
+    } else if (char === '[' || char === '{') {
+      depth += 1
+    } else if ((char === ']' || char === '}') && (depth -= 1) === 0) {
+      return JSON.parse(answer.slice(start, at + 1)) as unknown
+    }
+  }
+
+  throw new Error('no list in the answer')
+}
+
+/** The sessions in the text of a `list_sessions` answer. */
+export const parseAppList = (answer: string): AppSession[] => {
+  const parsed = leadingArray(answer)
+
+  return (Array.isArray(parsed) ? parsed : []).filter(isRecord).map(entry => ({
+    sessionId: text(entry.sessionId, 120),
+    title: typeof entry.title === 'string' ? entry.title : '',
+    cwd: typeof entry.cwd === 'string' ? entry.cwd : '',
+    isArchived: entry.isArchived === true,
+    isRunning: entry.isRunning === true,
+    link: typeof entry.link === 'string' && entry.link.startsWith('claude://') ? entry.link : '',
+  })).filter(entry => entry.sessionId.startsWith('local_'))
+}
+
+/** The link that opens a session in Claude Desktop, as the app spells it in `list_sessions`. */
+export const appLinkOf = (app: string): string => `claude://claude.ai/epitaxy/${app}`
+
+/**
+ * The sessions with what Claude Desktop says of them: its id (from the session's process, else the app's own id
+ * spelled from the file's, else one session of the app with the same name and folder), its link, whether it is
+ * archived, and what it is doing now. `apps` null: the app was not reached, and only what the files say is used.
+ */
+export const withApp = (sessions: readonly Session[], apps: readonly AppSession[] | null, now: number): Session[] => {
+  const byId = new Map((apps ?? []).map(app => [app.sessionId, app]))
+  const taken = new Set(sessions.map(one => one.app).filter((app): app is string => app !== null))
+  const matched = sessions.map(one => {
+    if (one.app !== null) {
+      return one.app
+    }
+
+    if (byId.has(`local_${one.id}`) && !taken.has(`local_${one.id}`)) {
+      return `local_${one.id}`
+    }
+
+    const same = (apps ?? []).filter(app => !taken.has(app.sessionId) && one.title !== '' && app.title === one.title && app.cwd === one.cwd)
+
+    return same.length === 1 ? same[0]!.sessionId : null
+  })
+
+  return sessions.map((one, index) => {
+    const app = matched[index] ?? null
+    const known = app === null ? undefined : byId.get(app)
+    const archived = known !== undefined ? known.isArchived : apps === null || app === null ? null : one.live ? false : null
+    const activity: Activity = archived === true ? 'archived'
+      : one.live && ((known?.isRunning ?? false) || now - one.mtime < WORKING_MS) ? 'working'
+      : one.live ? 'open'
+      : 'closed'
+
+    return { ...one, app, appLink: app === null ? null : known?.link || appLinkOf(app), archived, activity }
+  })
+}
+
+/** The text of a tool's answer, its content blocks joined. */
+export const answerText = (result: { content?: unknown } | undefined): string =>
+  (Array.isArray(result?.content) ? result.content : [])
+    .map(block => (isRecord(block) && typeof block.text === 'string' ? block.text : ''))
+    .join('\n')
+    .trim()

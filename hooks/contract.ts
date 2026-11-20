@@ -55,6 +55,35 @@ export type Session = {
   removed: number | null
   /** When Claude Code deletes the file (last change + cleanupPeriodDays); null while the session runs. */
   deleteAt: number | null
+  /** The session's id in Claude Desktop (`local_…`), when known: seen in its process's file, or matched to the app's list. */
+  app: string | null
+  /** Memory its process holds, resident and swapped, in MB; null without a process. */
+  memMb: number | null
+  /** Filled by the mod from the app's list of sessions: the link that opens it in Claude Desktop, and whether it is archived. */
+  appLink: string | null
+  archived: boolean | null
+  /**
+   * `working`: its process runs and wrote in the last minutes (or the app says it is mid-turn); `open`: its process
+   * runs, idle; `archived`: archived in Claude Desktop; `closed`: no process.
+   */
+  activity: Activity
+}
+
+export type Activity = 'working' | 'open' | 'archived' | 'closed'
+
+/** Archiving or restoring sessions in Claude Desktop, asked with `{ type: 'archive' | 'unarchive' }`. */
+export type Op = {
+  id: number
+  kind: 'archive' | 'unarchive'
+  status: Status
+  results: Array<{ sid: string; ok: boolean; message: string }>
+}
+
+/** Whether the mod reaches Claude Desktop's session tools (`ccd_session_mgmt`). */
+export type AppLink = {
+  status: 'ok' | 'unavailable'
+  error: string
+  at: number
 }
 
 export type Hit = {
@@ -136,6 +165,10 @@ export type PageState = {
   reader: Reader | null
   /** The model search by meaning uses. */
   semanticModel: string
+  /** Whether archiving and the app's links are available; null before the mod asked the app. */
+  app: AppLink | null
+  /** The last archive or restore asked from the page. */
+  op: Op | null
 }
 
 export type PageAction =
@@ -143,3 +176,4 @@ export type PageAction =
   | { type: 'semantic'; id: number; q: string }
   | { type: 'read'; id: number; sid: string; start: number; count: number; tools: boolean }
   | { type: 'refresh' }
+  | { type: 'archive' | 'unarchive'; id: number; sids: string[] }
